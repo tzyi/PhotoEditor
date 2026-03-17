@@ -1,5 +1,7 @@
 import os
 import argparse
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from PIL import Image, ImageOps
 
@@ -29,10 +31,27 @@ def compress_image(input_path: Path, output_path: Path, quality: int) -> tuple[i
     return input_path.stat().st_size, out_file.stat().st_size
 
 
-def compress_folder(input_dir: str, output_dir: str, quality: int) -> None:
+def _worker(img_file: Path, input_path: Path, output_path: Path,
+            quality: int, print_lock: threading.Lock) -> tuple[int, int]:
+    """單一圖片的壓縮工作，供執行緒呼叫。"""
+    relative = img_file.relative_to(input_path)
+    out_file = output_path / relative
+    original_size, compressed_size = compress_image(img_file, out_file, quality)
+    ratio = (1 - compressed_size / original_size) * 100 if original_size > 0 else 0
+    with print_lock:
+        print(
+            f"  [OK] {relative}"
+            f"  {original_size // 1024} KB → {compressed_size // 1024} KB"
+            f"  (縮減 {ratio:.1f}%)"
+        )
+    return original_size, compressed_size
+
+
+def compress_folder(input_dir: str, output_dir: str, quality: int, threads: int) -> None:
     """
     遍歷 input_dir 中所有支援的圖片檔案（含子資料夾），
     壓縮後保留相同的目錄結構輸出到 output_dir。
+    使用多執行緒並行加速處理。
     """
     input_path = Path(input_dir).resolve()
     output_path = Path(output_dir).resolve()
@@ -56,7 +75,7 @@ def compress_folder(input_dir: str, output_dir: str, quality: int) -> None:
         print(f"       支援格式：{', '.join(SUPPORTED_EXTENSIONS)}")
         return
 
-    print(f"找到 {len(image_files)} 張圖片，開始壓縮（品質：{quality}%）...")
+    print(f"找到 {len(image_files)} 張圖片，開始壓縮（品質：{quality}%，執行緒數：{threads}）...")
     print(f"輸入資料夾：{input_path}")
     print(f"輸出資料夾：{output_path}")
     print("-" * 60)
@@ -65,26 +84,26 @@ def compress_folder(input_dir: str, output_dir: str, quality: int) -> None:
     total_compressed = 0
     success_count = 0
     fail_count = 0
+    print_lock = threading.Lock()
 
-    for img_file in image_files:
-        # 計算相對路徑，以便在輸出資料夾中重現目錄結構
-        relative = img_file.relative_to(input_path)
-        out_file = output_path / relative
+    with ThreadPoolExecutor(max_workers=threads) as executor:
+        futures = {
+            executor.submit(_worker, img_file, input_path, output_path, quality, print_lock): img_file
+            for img_file in image_files
+        }
 
-        try:
-            original_size, compressed_size = compress_image(img_file, out_file, quality)
-            total_original += original_size
-            total_compressed += compressed_size
-            ratio = (1 - compressed_size / original_size) * 100 if original_size > 0 else 0
-            print(
-                f"  [OK] {relative}"
-                f"  {original_size // 1024} KB → {compressed_size // 1024} KB"
-                f"  (縮減 {ratio:.1f}%)"
-            )
-            success_count += 1
-        except Exception as e:
-            print(f"  [失敗] {relative}  原因：{e}")
-            fail_count += 1
+        for future in as_completed(futures):
+            img_file = futures[future]
+            relative = img_file.relative_to(input_path)
+            try:
+                original_size, compressed_size = future.result()
+                total_original += original_size
+                total_compressed += compressed_size
+                success_count += 1
+            except Exception as e:
+                with print_lock:
+                    print(f"  [失敗] {relative}  原因：{e}")
+                fail_count += 1
 
     print("-" * 60)
     print(f"完成！成功：{success_count} 張  失敗：{fail_count} 張")
@@ -120,6 +139,13 @@ def parse_args() -> argparse.Namespace:
         metavar="0-100",
         help="壓縮品質，範圍 0（最差）~ 100（最佳），預設 70",
     )
+    parser.add_argument(
+        "-t", "--threads",
+        type=int,
+        default=min(8, (os.cpu_count() or 4)),
+        metavar="N",
+        help=f"並行執行緒數，預設為 CPU 核心數（最多 8），可自行調高",
+    )
     return parser.parse_args()
 
 
@@ -130,7 +156,11 @@ def main() -> None:
         print("[錯誤] 品質參數必須介於 0 到 100 之間。")
         return
 
-    compress_folder(args.input, args.output, args.quality)
+    if args.threads < 1:
+        print("[錯誤] 執行緒數必須至少為 1。")
+        return
+
+    compress_folder(args.input, args.output, args.quality, args.threads)
 
 
 if __name__ == "__main__":
