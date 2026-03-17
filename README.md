@@ -54,7 +54,7 @@ python compress_images.py -i "C:\Photos\原始" -o "C:\Photos\壓縮"
 ```bash
 python compress_images.py -i "C:\Photos\原始" -o "C:\Photos\壓縮" -q 50
 
-python compress_images.py -i "C:\Users\arif1\Downloads\未命名的轉存\生活日常_260224" -o "C:\Users\arif1\Downloads\未命名的轉存\compress" -q 50
+python compress_images.py -i "G:\0002_相簿\日期相簿_26" -o "C:\Users\arif1\Downloads\未命名的轉存\compress" -q 40
 ```
 
 3. 查看說明：

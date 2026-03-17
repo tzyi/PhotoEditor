@@ -1,7 +1,7 @@
 import os
 import argparse
 from pathlib import Path
-from PIL import Image
+from PIL import Image, ImageOps
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff", ".tif"}
 
@@ -12,6 +12,9 @@ def compress_image(input_path: Path, output_path: Path, quality: int) -> tuple[i
     回傳 (原始大小 bytes, 壓縮後大小 bytes)。
     """
     img = Image.open(input_path)
+
+    # 依據 EXIF 方向資訊旋轉圖片，避免壓縮後照片翻轉
+    img = ImageOps.exif_transpose(img)
 
     # RGBA / Palette 模式轉為 RGB，才能以 JPEG 格式儲存
     if img.mode in ("RGBA", "P"):
